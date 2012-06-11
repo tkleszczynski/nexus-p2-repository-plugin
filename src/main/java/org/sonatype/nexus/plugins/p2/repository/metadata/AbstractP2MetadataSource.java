@@ -20,10 +20,15 @@ import java.net.ConnectException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.jar.Attributes;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
+import java.util.jar.Manifest;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
 import org.codehaus.plexus.util.FileUtils;
+import org.codehaus.plexus.util.IOUtil;
 import org.codehaus.plexus.util.io.RawInputStreamFacade;
 import org.codehaus.plexus.util.xml.XmlStreamReader;
 import org.codehaus.plexus.util.xml.Xpp3Dom;
@@ -72,17 +77,25 @@ public abstract class AbstractP2MetadataSource<E extends P2Repository>
         return repository.getName();
     }
 
-    protected StorageItem createMetadataItem( final String path, final Xpp3Dom metadata, final String hack,
-                                              final Map<String, Object> context, final E repository )
+    protected StorageItem createMetadataItem( final String path,
+                                              final String pathCompressed,
+                                              final Xpp3Dom metadata,
+                                              final String hack,
+                                              final Map<String, Object> context,
+                                              final E repository )
         throws IOException
     {
         getLogger().debug( "Repository " + repository.getId() + ": Creating metadata item " + path );
-        final DefaultStorageFileItem result = createMetadataItem( repository, path, metadata, hack, context );
 
-        setItemAttributes( result, context, repository );
+        final DefaultStorageFileItem metadataXml = createMetadataItem( repository, path, metadata, hack, context );
+        final DefaultStorageFileItem metadataJar = compressMetadataItem( repository, pathCompressed, metadataXml );
+
+        setItemAttributes( metadataXml, context, repository );
 
         getLogger().debug( "Repository " + repository.getId() + ": Created metadata item " + path );
-        return doCacheItem( result, repository );
+
+        doCacheItem( metadataJar, repository );
+        return doCacheItem( metadataXml, repository );
     }
 
     public static DefaultStorageFileItem createMetadataItem( final Repository repository, final String path,
@@ -112,6 +125,40 @@ public abstract class AbstractP2MetadataSource<E extends P2Repository>
             new DefaultStorageFileItem( repository, new ResourceStoreRequest( path ), true /* isReadable */,
                 false /* isWritable */, content );
         result.getItemContext().putAll( context );
+        result.setLength( bytes.length );
+        return result;
+    }
+
+    private DefaultStorageFileItem compressMetadataItem( final Repository repository,
+                                                         final String path,
+                                                         final DefaultStorageFileItem metadataXml )
+        throws IOException
+    {
+        final Manifest manifest = new Manifest();
+        manifest.getMainAttributes().put( Attributes.Name.MANIFEST_VERSION, "1.0");
+
+        final ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        final JarOutputStream out = new JarOutputStream( buffer, manifest );
+        final InputStream in = metadataXml.getInputStream();
+
+        try
+        {
+            out.putNextEntry( new JarEntry( metadataXml.getPath() ) );
+            IOUtil.copy( in, out );
+        }
+        finally
+        {
+            IOUtil.close( in );
+            IOUtil.close( out );
+            IOUtil.close( buffer );
+        }
+
+        final byte[] bytes = buffer.toByteArray();
+
+        final ContentLocator content = new ByteArrayContentLocator( bytes, "application/java-archive" );
+        final DefaultStorageFileItem result = new DefaultStorageFileItem(
+            repository, new ResourceStoreRequest( path ), true /* isReadable */, false /* isWritable */, content
+        );
         result.setLength( bytes.length );
         return result;
     }
@@ -169,7 +216,8 @@ public abstract class AbstractP2MetadataSource<E extends P2Repository>
         lock.lock( Action.read );
         try
         {
-            if ( P2Constants.CONTENT_PATH.equals( request.getRequestPath() ) )
+            if ( P2Constants.CONTENT_PATH.equals( request.getRequestPath() )
+                || P2Constants.CONTENT_JAR.equals( request.getRequestPath() ))
             {
                 try
                 {
@@ -230,7 +278,8 @@ public abstract class AbstractP2MetadataSource<E extends P2Repository>
                     contentXmlUid.getLock().lock( Action.read );
                 }
             }
-            else if ( P2Constants.ARTIFACTS_PATH.equals( request.getRequestPath() ) )
+            else if ( P2Constants.ARTIFACTS_PATH.equals( request.getRequestPath() )
+                      || P2Constants.ARTIFACTS_JAR.equals( request.getRequestPath() ) )
             {
                 try
                 {
@@ -469,8 +518,10 @@ public abstract class AbstractP2MetadataSource<E extends P2Repository>
             deleteItemSilently( repository, new ResourceStoreRequest( P2Constants.ARTIFACTS_XML ) );
             getLogger().debug( "Repository " + repository.getId() + ": Deleted p2 artifacts metadata items." );
 
-            return createMetadataItem( P2Constants.ARTIFACTS_PATH, dom, P2Constants.XMLPI_ARTIFACTS, context,
-                repository );
+            return createMetadataItem(
+                P2Constants.ARTIFACTS_PATH, P2Constants.ARTIFACTS_JAR, dom, P2Constants.XMLPI_ARTIFACTS, context,
+                repository
+            );
         }
         catch ( final IOException e )
         {
@@ -489,7 +540,9 @@ public abstract class AbstractP2MetadataSource<E extends P2Repository>
             deleteItemSilently( repository, new ResourceStoreRequest( P2Constants.CONTENT_XML ) );
             getLogger().debug( "Repository " + repository.getId() + ": Deleted p2 content metadata items." );
 
-            return createMetadataItem( P2Constants.CONTENT_PATH, dom, P2Constants.XMLPI_CONTENT, context, repository );
+            return createMetadataItem(
+                P2Constants.CONTENT_PATH, P2Constants.CONTENT_JAR, dom, P2Constants.XMLPI_CONTENT, context, repository
+            );
         }
         catch ( final IOException e )
         {
