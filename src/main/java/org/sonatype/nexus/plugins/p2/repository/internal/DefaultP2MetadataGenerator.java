@@ -49,6 +49,7 @@ import org.sonatype.p2.bridge.Publisher;
 import org.sonatype.p2.bridge.model.InstallableArtifact;
 import org.sonatype.p2.bridge.model.InstallableUnit;
 import org.sonatype.p2.bridge.model.InstallableUnitArtifact;
+import org.sonatype.p2.bridge.model.InstallableUnitProperty;
 import org.sonatype.p2.bridge.model.TouchpointType;
 import org.sonatype.sisu.resource.scanner.helper.ListenerSupport;
 import org.sonatype.sisu.resource.scanner.scanners.SerialScanner;
@@ -179,8 +180,9 @@ public class DefaultP2MetadataGenerator
             iuArtifact.setId( artifact.getId() );
             iuArtifact.setClassifier( artifact.getClassifier() );
             iuArtifact.setVersion( artifact.getVersion() );
-
-            iu.addArtifact( iuArtifact );
+            if (!isFeatureGroup(iu)) {
+            	iu.addArtifact( iuArtifact );
+            }
 
             final TouchpointType touchpointType = new TouchpointType();
             touchpointType.setId( "org.eclipse.equinox.p2.osgi" );
@@ -189,6 +191,17 @@ public class DefaultP2MetadataGenerator
             iu.setTouchpointType( touchpointType );
         }
     }
+
+	private boolean isFeatureGroup(final InstallableUnit iu) {
+		boolean isFeatureGroup = false;
+		for (InstallableUnitProperty iup : iu.getProperties()) {
+			if ( "org.eclipse.equinox.p2.type.group".equals(iup.getName()) )
+			{
+				isFeatureGroup = Boolean.parseBoolean(iup.getValue());
+			}
+		}
+		return isFeatureGroup;
+	}
 
     /**
      * Stores the P2 data for the passed artifact.
